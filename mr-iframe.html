@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MR iframe</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:8px;background:#fff}
+    #mr-widget{min-height:260px;border:1px solid #e5e7eb;padding:12px;border-radius:6px;background:#fff}
+    #mr_info_box{margin-top:10px;font-size:14px;color:#111}
+  </style>
+</head>
+<body>
+  <div id="mr-widget">Chargement du sélecteur Mondial Relay…</div>
+
+  <script>
+  (function(){
+    // === CONFIG ===
+    // Remplace BDTEST par ton Brand Mondial Relay en production
+    var MR_OPTIONS = { Target:'#mr-widget', Brand:'BDTEST', Country:'FR', DisplayMapInfo:true };
+
+    // util : charger un script dynamiquement
+    function loadScript(src, cb){
+      var s = document.createElement('script'); s.src = src; s.async = true;
+      s.onload = function(){ cb && cb(null); };
+      s.onerror = function(){ cb && cb(new Error('Erreur chargement ' + src)); };
+      document.head.appendChild(s);
+    }
+
+    // envoyer un message au parent (postMessage)
+    function postToParent(msg){
+      try { parent.postMessage(msg, '*'); } catch(e) {}
+    }
+
+    // callback quand un point est choisi
+    function onSelectPoint(data){
+      postToParent({ type:'mr_selected', data: data });
+      try {
+        var id = data.ID || data.NumPointRelais || data.PUPNumber || data.id || "";
+        var info = document.getElementById('mr_info_box');
+        if(!info){ info = document.createElement('div'); info.id = 'mr_info_box'; document.body.appendChild(info); }
+        info.textContent = 'Point sélectionné : ' + (id || '[sans ID]');
+      } catch(e){}
+    }
+
+    // init : charger jQuery puis plugin MR
+    loadScript('https://code.jquery.com/jquery-3.6.0.min.js', function(err1){
+      if(err1){ document.getElementById('mr-widget').textContent = 'Erreur chargement jQuery'; return; }
+      loadScript('https://widget.mondialrelay.com/parcelshop-picker/jquery.plugin.mondialrelay.parcelshoppicker.min.js', function(err2){
+        if(err2){ document.getElementById('mr-widget').textContent = 'Erreur chargement MR script'; return; }
+        try {
+          if(window.jQuery && typeof jQuery.fn.MR_ParcelShopPicker === 'function'){
+            jQuery(MR_OPTIONS.Target).MR_ParcelShopPicker(Object.assign({}, MR_OPTIONS, {
+              OnParcelShopSelected: onSelectPoint,
+              OnNoResultReturned: function(){ postToParent({ type:'mr_no_result' }); }
+            }));
+          } else if (typeof MR_ParcelShopPicker === 'function') {
+            MR_ParcelShopPicker(Object.assign({}, MR_OPTIONS, { OnParcelShopSelected: onSelectPoint }));
+          } else {
+            document.getElementById('mr-widget').textContent = 'Plugin MR non disponible.';
+          }
+        } catch(e){
+          document.getElementById('mr-widget').textContent = 'Init error: ' + e;
+        }
+      });
+    });
+
+    // petit handshake : prévenir le parent qu'on est prêt (optionnel)
+    try {
+      parent.postMessage({ type:'mr_iframe_loaded' }, '*');
+    } catch(e){}
+  })();
+  </script>
+</body>
+</html>
