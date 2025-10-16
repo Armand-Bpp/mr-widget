@@ -9,7 +9,7 @@
     .wrap { max-width:980px; margin:18px auto; padding:18px; box-sizing:border-box; }
     #mr-widget { min-height:360px; border:1px dashed #ddd; padding:12px; border-radius:6px; }
     .info { margin:12px 0; color:#555; font-size:14px; }
-    .debug { margin-top:14px; background:#f7f7f7; padding:10px; border-radius:6px; font-size:13px; color:#333; white-space:pre-wrap; max-height:240px; overflow:auto; }
+    .debug { margin-top:14px; background:#f7f7f7; padding:10px; border-radius:6px; font-size:13px; color:#333; white-space:pre-wrap; max-height:300px; overflow:auto; }
     .controls { margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; }
     button { padding:8px 12px; border-radius:6px; border:1px solid #cfcfcf; background:#fff; cursor:pointer; }
     button.primary { background:#8b2350; color:#fff; border-color:#6b173a; }
@@ -36,18 +36,28 @@
   </div>
 
   <script>
-  // ====== CONFIG À ADAPTER si besoin ======
-  // Remplace 'CC2370D7' par ton code enseigne fourni par Mondial Relay si nécessaire.
+  // -------- CONFIG À ADAPTER --------
+  // Remplace 'CC2370D7' par ton code enseigne Mondial Relay si nécessaire.
   window.MR_OPTIONS = {
-    brand: 'CC2370D7'
-    // autres options possibles : language: 'FR', country: 'FR', etc.
+    brand: 'CC2370D7',
+    language: 'FR',
+    country: 'FR'
+    // ajoute d'autres options requises par ton intégration si besoin
   };
 
-  // targetOrigin pour postMessage. Peut être passé en param URL ?targetOrigin=https://ton-site.example
+  // -------- DÉTECTION D'ORIGINE SÛRE POUR postMessage --------
   const urlParams = new URLSearchParams(location.search);
-  const ALLOWED_TARGET = urlParams.get('targetOrigin') || '*';
+  const paramTarget = urlParams.get('targetOrigin'); // si fourni explicitement ?targetOrigin=...
+  let derivedParentOrigin = null;
+  try {
+    if (document.referrer) derivedParentOrigin = (new URL(document.referrer)).origin;
+  } catch (e) {
+    // ignore
+  }
+  // Priorité : param URL -> origine du referrer -> fallback '*'
+  const DEFAULT_TARGET = paramTarget || derivedParentOrigin || '*';
 
-  // zone debug
+  // Zone debug
   const dbgEl = document.getElementById('debug');
   function appendDebug(msg) {
     const time = new Date().toISOString().split('T')[1].slice(0,8);
@@ -58,8 +68,11 @@
   }
 
   appendDebug('Initialisation MR iframe (locale)');
+  appendDebug('targetOrigin param: ' + (paramTarget || 'none'));
+  appendDebug('document.referrer origin: ' + (derivedParentOrigin || 'none'));
+  appendDebug('DEFAULT_TARGET utilisé: ' + DEFAULT_TARGET);
 
-  // ====== CHARGEMENT DYNAMIQUE DE JQUERY ET DU PLUGIN MR ======
+  // -------- CHARGEMENT DYNAMIQUE DE SCRIPTS --------
   function loadScript(src, onload, onerror) {
     const s = document.createElement('script');
     s.src = src;
@@ -69,10 +82,10 @@
     document.head.appendChild(s);
   }
 
-  // Chargement jQuery puis plugin MR
   appendDebug('Chargement jQuery...');
   loadScript('https://code.jquery.com/jquery-3.6.0.min.js', function() {
     appendDebug('jQuery chargé: ' + (typeof jQuery !== 'undefined'));
+    // plugin "wrapper" (minified) fourni par Mondial Relay
     const mrPluginUrl = 'https://widget.mondialrelay.com/parcelshop-picker/jquery.plugin.mondialrelay.parcelshoppicker.min.js';
     appendDebug('Chargement plugin MR: ' + mrPluginUrl);
     loadScript(mrPluginUrl, function() {
@@ -87,35 +100,45 @@
     document.getElementById('mr-widget').innerText = 'Impossible de charger jQuery.';
   });
 
-  // ====== INITIALISATION DU WIDGET SI POSSIBLE ======
+  // -------- INITIALISATION DU WIDGET (avec robustesse) --------
   function initMR() {
     try {
       if (window.jQuery && jQuery.fn && jQuery.fn.MR_ParcelShopPicker) {
         appendDebug('Initialisation du sélecteur MR avec MR_OPTIONS: ' + JSON.stringify(window.MR_OPTIONS));
         try {
+          // Essayer l'appel standard
           jQuery('#mr-widget').MR_ParcelShopPicker(window.MR_OPTIONS);
-          appendDebug('Appel MR_ParcelShopPicker() effectué.');
-        } catch (e) {
-          appendDebug("Erreur lors de l'appel MR_ParcelShopPicker(): " + e);
+          appendDebug('Appel MR_ParcelShopPicker() effectué sans exception.');
+        } catch (e1) {
+          appendDebug('Exception lors de MR_ParcelShopPicker(): ' + (e1 && e1.stack ? e1.stack : e1));
+          // Tentative de secours : ajouter / corriger quelques options courantes si manquantes puis réessayer
+          try {
+            window.MR_OPTIONS.language = window.MR_OPTIONS.language || 'FR';
+            window.MR_OPTIONS.country = window.MR_OPTIONS.country || 'FR';
+            appendDebug('Réessai MR_ParcelShopPicker() avec options ajustées: ' + JSON.stringify(window.MR_OPTIONS));
+            jQuery('#mr-widget').MR_ParcelShopPicker(window.MR_OPTIONS);
+            appendDebug('Réessai MR_ParcelShopPicker() réussi.');
+          } catch (e2) {
+            appendDebug('Échec du réessai MR_ParcelShopPicker(): ' + (e2 && e2.stack ? e2.stack : e2));
+            document.getElementById('mr-widget').innerText = 'Impossible d\'initialiser le widget Mondial Relay (voir console debug).';
+          }
         }
       } else {
-        appendDebug('MR_ParcelShopPicker non disponible.');
+        appendDebug('MR_ParcelShopPicker non disponible (bibliothèque manquante).');
       }
     } catch (e) {
-      appendDebug('Erreur initMR: ' + e);
+      appendDebug('Erreur initMR: ' + (e && e.stack ? e.stack : e));
     }
 
-    // Après l'initialisation : installer l'observateur pour détecter la sélection utilisateur
+    // Installer l'observateur après tentative d'initialisation
     installSelectionObserver();
   }
 
-  // ====== LOGIQUE POUR DÉTECTER LA SÉLECTION ET L'ENVOYER ======
+  // -------- DÉTECTION DE LA SÉLECTION DANS LE DOM --------
   function findSelectedCandidate(root) {
-    // Plusieurs heuristiques pour trouver un ID / label de Point Relais dans le DOM
-    // Retourne {id:, label:, rawElement: el} ou null
     root = root || document;
 
-    // 1) inputs cachés classiques
+    // 1) inputs cachés connus
     const candidates = [
       'input[name="PSPID"]',
       'input[name="parcelshop_id"]',
@@ -126,84 +149,100 @@
     for (const sel of candidates) {
       const inp = root.querySelector(sel);
       if (inp && inp.value) {
-        return { id: inp.value, label: inp.getAttribute('data-label') || inp.value, rawElement: inp };
+        return { id: inp.value, label: (inp.getAttribute('data-label') || inp.value || '').toString(), rawElement: inp };
       }
     }
 
-    // 2) éléments marqués data-*
+    // 2) data-* attributes
     const elData = root.querySelector('[data-psp-id], [data-parcelshop-id], [data-id]');
     if (elData) {
       const id = elData.getAttribute('data-psp-id') || elData.getAttribute('data-parcelshop-id') || elData.getAttribute('data-id');
-      if (id) return { id: id, label: elData.textContent.trim().slice(0,120), rawElement: elData };
+      if (id) return { id: id, label: (elData.textContent || '').trim().slice(0,120), rawElement: elData };
     }
 
-    // 3) éléments avec classe "selected" ou "mr-selected"
+    // 3) éléments "selected"
     const selEl = root.querySelector('.selected, .mr-selected, .psp-selected, .parcelshop-selected');
     if (selEl) {
       const possibleId = selEl.getAttribute('data-id') || selEl.getAttribute('data-psp-id') || (selEl.querySelector('[data-psp-id]') && selEl.querySelector('[data-psp-id]').getAttribute('data-psp-id'));
-      if (possibleId) return { id: possibleId, label: selEl.textContent.trim().slice(0,120), rawElement: selEl };
+      if (possibleId) return { id: possibleId, label: (selEl.textContent || '').trim().slice(0,120), rawElement: selEl };
     }
 
-    // 4) inputs radio sélectionnés
+    // 4) radio checked
     const radio = root.querySelector('input[type="radio"]:checked');
     if (radio) {
       const val = radio.value || radio.getAttribute('data-id') || radio.getAttribute('data-psp-id');
-      if (val) return { id: val, label: radio.getAttribute('data-label') || radio.value || (radio.closest('label') && radio.closest('label').textContent && radio.closest('label').textContent.trim()), rawElement: radio };
+      if (val) {
+        const label = radio.getAttribute('data-label') || (radio.closest('label') && (radio.closest('label').textContent || '').trim()) || radio.value || '';
+        return { id: val, label: label, rawElement: radio };
+      }
     }
 
-    // rien trouvé
     return null;
   }
 
+  // -------- ENVOI postMessage SÛR (essayes plusieurs options si erreur) --------
+  function tryPostMessage(win, message, originCandidate) {
+    const originsToTry = [];
+    if (originCandidate && originCandidate !== '*') originsToTry.push(originCandidate);
+    // si nous avons derivé l'origine du referrer distincte, essayer aussi
+    if (derivedParentOrigin && !originsToTry.includes(derivedParentOrigin)) originsToTry.push(derivedParentOrigin);
+    // enfin fallback permissif (attention sécurité)
+    originsToTry.push('*');
+
+    for (const origin of originsToTry) {
+      try {
+        win.postMessage(message, origin);
+        appendDebug('postMessage envoyé avec origin="' + origin + '" vers ' + (win === window.parent ? 'parent' : (win === window.opener ? 'opener' : 'other')));
+        return true;
+      } catch (err) {
+        appendDebug('postMessage échoué avec origin="' + origin + '": ' + (err && err.message ? err.message : err));
+        // continuer à la prochaine origine candidate
+      }
+    }
+    return false;
+  }
+
   function sendSelectionToParent(obj) {
-    // obj = {id, label}
-    const message = { source: 'mr-iframe', type: 'parcelshop-selected', payload: obj };
-    appendDebug('Envoi postMessage vers parent/opener: ' + JSON.stringify(message));
-    try {
-      // si ouvert en popup et opener présent -> envoyer à opener
-      if (window.opener && !window.opener.closed) {
-        try {
-          window.opener.postMessage(message, ALLOWED_TARGET);
-          appendDebug('Message envoyé à window.opener (popup).');
-        } catch (e) {
-          appendDebug('Erreur envoi à opener: ' + e);
-        }
+    const message = { source: 'mr-iframe', type: 'parcelshop-selected', payload: obj, ts: Date.now() };
+    appendDebug('Tentative d\'envoi postMessage: ' + JSON.stringify(message));
+
+    // Essayer l'opener si présent
+    if (window.opener && !window.opener.closed) {
+      try {
+        const ok = tryPostMessage(window.opener, message, DEFAULT_TARGET);
+        if (!ok) appendDebug('Impossible d\'envoyer au opener.');
+      } catch (e) {
+        appendDebug('Erreur send to opener: ' + (e && e.stack ? e.stack : e));
       }
-      // aussi envoyer au parent (iframe)
-      if (window.parent && window.parent !== window) {
-        try {
-          window.parent.postMessage(message, ALLOWED_TARGET);
-          appendDebug('Message envoyé à window.parent (iframe).');
-        } catch (e) {
-          appendDebug('Erreur envoi à parent: ' + e);
-        }
+    }
+
+    // Essayer parent (iframe)
+    if (window.parent && window.parent !== window) {
+      try {
+        const ok = tryPostMessage(window.parent, message, DEFAULT_TARGET);
+        if (!ok) appendDebug('Impossible d\'envoyer au parent.');
+      } catch (e) {
+        appendDebug('Erreur send to parent: ' + (e && e.stack ? e.stack : e));
       }
-    } catch (e) {
-      appendDebug('Erreur postMessage: ' + e);
     }
   }
 
-  // Observateur DOM : surveille #mr-widget pour éléments candidats et click sur éléments
+  // -------- OBSERVER POUR DÉTECTER LA SÉLECTION --------
   function installSelectionObserver() {
     const target = document.getElementById('mr-widget') || document;
     appendDebug('Installation MutationObserver sur #mr-widget');
     try {
-      // envoi si une sélection est détectée automatiquement après mutation
       const mo = new MutationObserver(function(mutations) {
-        // petit délai pour laisser le plugin finaliser l'état sélectionné
         setTimeout(() => {
           const found = findSelectedCandidate(target);
           if (found) {
             appendDebug('Sélection détectée via MutationObserver: ' + JSON.stringify(found));
-            // envoi automatique
             sendSelectionToParent({ id: found.id, label: found.label || '' });
           }
         }, 250);
       });
-
       mo.observe(target, { childList: true, subtree: true, attributes: true, characterData: true });
 
-      // clic global : si utilisateur clique sur un élément candidat, on tente d'envoyer
       target.addEventListener('click', function(evt) {
         setTimeout(() => {
           const found = findSelectedCandidate(target);
@@ -216,51 +255,43 @@
 
       appendDebug('Observer et listeners installés.');
     } catch (e) {
-      appendDebug('Erreur installSelectionObserver: ' + e);
+      appendDebug('Erreur installSelectionObserver: ' + (e && e.stack ? e.stack : e));
     }
   }
 
-  // ====== FONCTION DE LISTING (DEBUG) ======
+  // -------- DEBUG: lister candidats --------
   function listCandidates() {
     const target = document.getElementById('mr-widget') || document;
     const infos = [];
-
-    // chercher inputs radio
     target.querySelectorAll('input[type="radio"]').forEach(r => {
       infos.push({
         kind: 'radio',
         val: r.value,
         dataId: r.getAttribute('data-psp-id') || r.getAttribute('data-id') || null,
-        label: r.getAttribute('data-label') || (r.closest('label') && r.closest('label').textContent && r.closest('label').textContent.trim()) || null,
+        label: r.getAttribute('data-label') || (r.closest('label') && (r.closest('label').textContent || '').trim()) || null,
         checked: r.checked
       });
     });
-
-    // éléments data-psp-id
     target.querySelectorAll('[data-psp-id]').forEach(el => {
-      infos.push({ kind:'data-psp', val: el.getAttribute('data-psp-id'), text: el.textContent.trim().slice(0,120) });
+      infos.push({ kind:'data-psp', val: el.getAttribute('data-psp-id'), text: (el.textContent || '').trim().slice(0,120) });
     });
-
-    // éléments avec classe contenant "psp" ou "parcelshop"
     target.querySelectorAll('[class*="psp"], [class*="parcelshop"], [class*="parcel-shop"]').forEach(el => {
-      infos.push({ kind:'class-psp', class: el.className, text: el.textContent.trim().slice(0,120) });
+      infos.push({ kind:'class-psp', class: el.className, text: (el.textContent || '').trim().slice(0,120) });
     });
-
-    // inputs cachés
     ['PSPID','parcelshop_id','selectedParcelShopId','selected_psp','psp_id'].forEach(name => {
       const inp = target.querySelector('input[name="' + name + '"]');
       if (inp) infos.push({ kind:'hidden-input', name: name, value: inp.value, dataLabel: inp.getAttribute('data-label') || null });
     });
-
     appendDebug('CANDIDATS TROUVES: ' + JSON.stringify(infos));
     return infos;
   }
 
-  // ====== BOUTONS DE DEBUG ======
+  // -------- BOUTONS DEBUG --------
   document.getElementById('btn-debug').addEventListener('click', function() {
     appendDebug('MR_OPTIONS: ' + JSON.stringify(window.MR_OPTIONS));
     appendDebug('location.href: ' + location.href);
-    appendDebug('Allowed target for postMessage: ' + ALLOWED_TARGET);
+    appendDebug('DEFAULT_TARGET: ' + DEFAULT_TARGET);
+    appendDebug('derivedParentOrigin: ' + (derivedParentOrigin || 'none'));
     appendDebug('jQuery present: ' + (typeof jQuery !== 'undefined'));
     appendDebug('MR plugin available: ' + !!(jQuery && jQuery.fn && jQuery.fn.MR_ParcelShopPicker));
   });
@@ -280,17 +311,21 @@
     listCandidates();
   });
 
-  // ====== ECOUTE DES MESSAGES INCOMING (optionnel) ======
+  // -------- RECEVOIR MESSAGES (optionnel) --------
   window.addEventListener('message', function(evt) {
     try {
       const m = evt.data || {};
+      appendDebug('Message entrant de ' + evt.origin + ' : ' + JSON.stringify(m));
       if (m && m.cmd === 'ping') {
-        const reply = { source: 'mr-iframe', type: 'pong', ts: Date.now() };
-        evt.source.postMessage(reply, ALLOWED_TARGET);
-        appendDebug('Répondu pong au parent');
+        try {
+          evt.source.postMessage({ source:'mr-iframe', type:'pong', ts:Date.now() }, evt.origin || DEFAULT_TARGET);
+          appendDebug('Répondu pong au parent/opener.');
+        } catch (e) {
+          appendDebug('Erreur envoi pong: ' + (e && e.message ? e.message : e));
+        }
       }
     } catch (e) {
-      appendDebug('Erreur gestion message entrant: ' + e);
+      appendDebug('Erreur gestion message entrant: ' + (e && e.stack ? e.stack : e));
     }
   });
 
